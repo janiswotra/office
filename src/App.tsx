@@ -4,20 +4,28 @@ import OfficeLayout from './components/OfficeLayout'
 import StatsBar from './components/StatsBar'
 import ActivityFeed from './components/ActivityFeed'
 
+const STATUS_API_URL = 'http://3.74.149.204:3002/status'
+
 function App() {
   const [data, setData] = useState<StatusResponse | null>(null)
   const [currentTime, setCurrentTime] = useState(new Date())
   const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
     const fetchStatus = async () => {
       try {
-        const response = await fetch('/api/status')
+        const response = await fetch(STATUS_API_URL)
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status}`)
+        }
         const json = await response.json()
         setData(json)
         setLoading(false)
+        setError(null)
       } catch (error) {
         console.error('Failed to fetch status:', error)
+        setError(error instanceof Error ? error.message : 'Failed to fetch data')
         setLoading(false)
       }
     }
@@ -53,8 +61,26 @@ function App() {
     return (
       <div className="min-h-screen bg-navy flex items-center justify-center">
         <div className="text-center">
-          <div className="text-6xl mb-4 animate-pulse">🐉</div>
-          <div className="text-xl text-gray-400">Initializing Dragon HQ...</div>
+          <div className="text-8xl mb-6 animate-bounce">🐉</div>
+          <div className="text-2xl text-gray-400 mb-2">Initializing Dragon HQ...</div>
+          <div className="text-sm text-gray-500">Connecting to agent workspace</div>
+        </div>
+      </div>
+    )
+  }
+
+  if (error) {
+    return (
+      <div className="min-h-screen bg-navy flex items-center justify-center">
+        <div className="text-center max-w-md">
+          <div className="text-6xl mb-4">⚠️</div>
+          <div className="text-xl text-red-400 mb-2">Connection Error</div>
+          <div className="text-sm text-gray-400 mb-4">
+            Cannot connect to Dragon HQ status server
+          </div>
+          <div className="text-xs text-gray-500 bg-gray-800/50 p-3 rounded font-mono">
+            {error}
+          </div>
         </div>
       </div>
     )
@@ -67,20 +93,23 @@ function App() {
         <div className="max-w-[1920px] mx-auto px-6 py-4">
           <div className="flex items-center justify-between">
             <div className="flex items-center space-x-4">
-              <div className="text-4xl">🐉</div>
+              <div className="text-5xl animate-pulse-subtle">🐉</div>
               <div>
-                <h1 className="text-2xl font-bold bg-gradient-to-r from-teal to-blue-400 bg-clip-text text-transparent">
+                <h1 className="text-3xl font-bold bg-gradient-to-r from-teal to-blue-400 bg-clip-text text-transparent">
                   Dragon HQ
                 </h1>
-                <p className="text-sm text-gray-400">Yena AI Operations Center</p>
+                <p className="text-sm text-gray-400">Yena AI Operations Center — Live Office View</p>
               </div>
             </div>
             <div className="flex items-center space-x-6">
               <div className="text-right">
                 <div className="text-sm text-gray-400">System Time</div>
-                <div className="text-xl font-mono text-teal">{formatTime(currentTime)}</div>
+                <div className="text-2xl font-mono text-teal">{formatTime(currentTime)}</div>
               </div>
-              <div className="w-3 h-3 bg-green-500 rounded-full animate-pulse-slow"></div>
+              <div className="flex items-center space-x-2">
+                <div className="w-3 h-3 bg-green-500 rounded-full animate-pulse"></div>
+                <span className="text-xs text-green-400 font-semibold">LIVE</span>
+              </div>
             </div>
           </div>
         </div>
@@ -103,6 +132,18 @@ function App() {
           </div>
         </div>
       </div>
+
+      {/* Footer */}
+      <footer className="max-w-[1920px] mx-auto px-6 py-6 mt-12 border-t border-gray-800">
+        <div className="flex items-center justify-between text-sm text-gray-500">
+          <div>
+            Powered by OpenClaw • Real-time agent monitoring
+          </div>
+          <div>
+            Last update: {data ? new Date().toLocaleTimeString() : 'N/A'}
+          </div>
+        </div>
+      </footer>
     </div>
   )
 }

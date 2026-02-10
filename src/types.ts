@@ -9,7 +9,7 @@ export interface Agent {
   status: AgentStatus;
   currentTask: string;
   lastCompleted: string;
-  lastCompletedAt: string;
+  lastCompletedAt: string | null;
   tasksToday: number;
   color: string;
 }
@@ -25,6 +25,7 @@ export interface Activity {
   agent: string;
   action: string;
   time: string;
+  status?: AgentStatus;
 }
 
 export interface StatusResponse {
