@@ -13,7 +13,7 @@ const PORT = 3002;
 // Enable CORS for all origins
 app.use(cors());
 
-// Agent mapping
+// Agent mapping - extract first 8 chars of cron UUID
 const AGENT_MAP = {
   // Scribe (Blog Writer)
   'fb78f97d': 'scribe',
@@ -110,10 +110,51 @@ function parseSessionFile(filePath) {
   }
 }
 
+function extractCronIdFromEvents(events) {
+  // Look for cron ID in message content like: [cron:64ba08c5-9508-4e89-b158-724986ea77e9 label]
+  for (const event of events) {
+    if (event.type === 'message' && event.message?.content) {
+      const content = Array.isArray(event.message.content) 
+        ? event.message.content[0]?.text 
+        : event.message.content;
+      
+      if (typeof content === 'string') {
+        const cronMatch = content.match(/\[cron:([a-f0-9-]+)\s+/);
+        if (cronMatch) {
+          // Return first 8 chars of UUID
+          return cronMatch[1].split('-')[0];
+        }
+      }
+    }
+  }
+  return null;
+}
+
 function extractTaskFromEvents(events) {
   // Look for user messages or assistant responses to infer current task
   for (let i = events.length - 1; i >= 0; i--) {
     const event = events[i];
+    
+    // Try to extract from cron message first
+    if (event.type === 'message' && event.message?.content) {
+      const content = Array.isArray(event.message.content) 
+        ? event.message.content[0]?.text 
+        : event.message.content;
+      
+      if (typeof content === 'string') {
+        // Extract cron label
+        const cronMatch = content.match(/\[cron:[a-f0-9-]+\s+([^\]]+)\]/);
+        if (cronMatch) {
+          return cronMatch[1].replace(/-/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+        }
+        
+        // Look for task description
+        const lines = content.split('\n').filter(l => l.trim() && !l.startsWith('['));
+        if (lines.length > 0 && lines[0].length < 100) {
+          return lines[0].trim();
+        }
+      }
+    }
     
     if (event.type === 'message' && event.role === 'user') {
       const text = event.content?.[0]?.text || event.content;
@@ -170,26 +211,27 @@ function readSessionData() {
       const stats = fs.statSync(filePath);
       const mtime = stats.mtimeMs;
       
-      // Parse session key
+      // Parse session events
+      const events = parseSessionFile(filePath);
+      if (events.length === 0) continue;
+      
+      // Determine agent ID
       let agentId = null;
       
-      // Check if it's Daniel's main session
-      if (file.includes('agent_main_main')) {
-        agentId = 'daniel';
-      } else {
-        // Check if it's a cron session
-        const cronMatch = file.match(/cron_([a-f0-9]+)-/);
-        if (cronMatch) {
-          const cronId = cronMatch[1];
+      // Check for main session (Daniel)
+      const sessionEvent = events.find(e => e.type === 'session');
+      if (sessionEvent) {
+        // Try to extract cron ID from message content
+        const cronId = extractCronIdFromEvents(events);
+        if (cronId) {
           agentId = AGENT_MAP[cronId];
+        } else {
+          // Assume it's Daniel's main session if no cron ID
+          agentId = 'daniel';
         }
       }
       
       if (!agentId || !agentData[agentId]) continue;
-      
-      // Parse session events
-      const events = parseSessionFile(filePath);
-      if (events.length === 0) continue;
       
       const status = getSessionStatus(mtime);
       const task = extractTaskFromEvents(events);
@@ -272,7 +314,10 @@ function updateCache() {
   console.log('[STATUS] Refreshing cache...');
   cachedStatus = readSessionData();
   lastUpdate = Date.now();
-  console.log(`[STATUS] Cache updated. Active agents: ${cachedStatus.agents.filter(a => a.status === 'active').length}`);
+  
+  const activeCount = cachedStatus.agents.filter(a => a.status === 'active').length;
+  const completedCount = cachedStatus.agents.filter(a => a.status === 'completed').length;
+  console.log(`[STATUS] Cache updated. Active: ${activeCount}, Completed: ${completedCount}, Total tasks today: ${cachedStatus.stats.totalTasksToday}`);
 }
 
 // Initial cache update
