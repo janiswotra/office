@@ -4,7 +4,7 @@ import OfficeLayout from './components/OfficeLayout'
 import StatsBar from './components/StatsBar'
 import ActivityFeed from './components/ActivityFeed'
 
-const STATUS_API_URL = 'http://3.74.149.204:3002/status'
+const STATUS_API_URL = '/api/status'
 
 function App() {
   const [data, setData] = useState<StatusResponse | null>(null)
