@@ -3,6 +3,7 @@ import { StatusResponse } from './types'
 import OfficeLayout from './components/OfficeLayout'
 import StatsBar from './components/StatsBar'
 import ActivityFeed from './components/ActivityFeed'
+import Deliverables from './components/Deliverables'
 
 const STATUS_API_URL = '/api/status'
 
@@ -130,6 +131,11 @@ function App() {
           <div className="xl:col-span-1">
             {data && <ActivityFeed activities={data.recentActivity} />}
           </div>
+        </div>
+
+        {/* Deliverables Dashboard - Full Width */}
+        <div className="mt-8">
+          <Deliverables />
         </div>
       </div>
 

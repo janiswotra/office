@@ -320,6 +320,41 @@ function updateCache() {
   console.log(`[STATUS] Cache updated. Active: ${activeCount}, Completed: ${completedCount}, Total tasks today: ${cachedStatus.stats.totalTasksToday}`);
 }
 
+// === Agent Override System ===
+// External processes (Hunter pipeline, etc.) can write to this file
+// to show as "active" on the dashboard
+const OVERRIDES_PATH = path.join(__dirname, 'agent-overrides.json');
+
+function applyOverrides(statusData) {
+  try {
+    if (fs.existsSync(OVERRIDES_PATH)) {
+      const stat = fs.statSync(OVERRIDES_PATH);
+      // Only apply if override file is less than 2 hours old
+      if (Date.now() - stat.mtimeMs < 2 * 60 * 60 * 1000) {
+        const overrides = JSON.parse(fs.readFileSync(OVERRIDES_PATH, 'utf8'));
+        for (const agent of statusData.agents) {
+          if (overrides[agent.id]) {
+            const o = overrides[agent.id];
+            // Check if the process is still running (pidFile check)
+            if (o.pidCheck) {
+              try {
+                process.kill(o.pidCheck, 0); // Check if PID exists
+              } catch {
+                continue; // Process dead, skip override
+              }
+            }
+            agent.status = o.status || agent.status;
+            agent.currentTask = o.currentTask || agent.currentTask;
+          }
+        }
+      }
+    }
+  } catch(e) {
+    // Silently ignore override errors
+  }
+  return statusData;
+}
+
 // Initial cache update
 updateCache();
 
@@ -327,7 +362,10 @@ updateCache();
 setInterval(updateCache, 60000);
 
 app.get('/status', (req, res) => {
-  res.json(cachedStatus);
+  // Apply overrides on every request (they can change any time)
+  const data = JSON.parse(JSON.stringify(cachedStatus)); // deep copy
+  applyOverrides(data);
+  res.json(data);
 });
 
 app.get('/health', (req, res) => {
@@ -338,7 +376,162 @@ app.get('/health', (req, res) => {
   });
 });
 
+// === DELIVERABLES ENDPOINT ===
+app.get('/deliverables', (req, res) => {
+  const today = new Date().toISOString().split('T')[0];
+  const deliverables = {
+    date: today,
+    blogPosts: [],
+    mediumArticles: [],
+    hunterLeads: [],
+    socialContent: [],
+    research: [],
+    outreach: null
+  };
+
+  try {
+    // === 1. Blog Posts ===
+    const blogIndexPath = '/home/ubuntu/clawd/yena-web/pages/blog/blogPostsIndex.ts';
+    if (fs.existsSync(blogIndexPath)) {
+      const blogContent = fs.readFileSync(blogIndexPath, 'utf8');
+      // Match blog posts with today's date
+      const postRegex = /{\s*slug:\s*['"]([^'"]+)['"]\s*,\s*locale:\s*['"]([^'"]+)['"]\s*,\s*date:\s*['"]([^'"]+)['"]\s*,\s*title:\s*['"]([^'"]+)['"]\s*(?:,\s*humanizeScore:\s*([0-9.]+))?\s*}/g;
+      let match;
+      while ((match = postRegex.exec(blogContent)) !== null) {
+        const [, slug, locale, date, title, score] = match;
+        if (date === today) {
+          deliverables.blogPosts.push({
+            slug,
+            locale,
+            title,
+            url: `https://yena.ai/${locale}/blog/${slug}`,
+            humanizeScore: score ? parseFloat(score) : null
+          });
+        }
+      }
+    }
+
+    // === 2. Medium Articles ===
+    const mediumDir = '/home/ubuntu/clawd/medium-articles';
+    if (fs.existsSync(mediumDir)) {
+      const files = fs.readdirSync(mediumDir);
+      for (const file of files) {
+        if (!file.endsWith('.md')) continue;
+        const filePath = path.join(mediumDir, file);
+        const stats = fs.statSync(filePath);
+        const fileDate = new Date(stats.mtime).toISOString().split('T')[0];
+        
+        if (fileDate === today) {
+          const content = fs.readFileSync(filePath, 'utf8');
+          const titleMatch = content.match(/^#\s+(.+)$/m);
+          const title = titleMatch ? titleMatch[1] : file.replace('.md', '');
+          
+          deliverables.mediumArticles.push({
+            filename: file,
+            title,
+            status: file.includes('published') ? 'published' : 'ready'
+          });
+        }
+      }
+    }
+
+    // === 3. Hunter Leads ===
+    const clawdDir = '/home/ubuntu/clawd';
+    const leadFiles = fs.readdirSync(clawdDir).filter(f => 
+      (f.startsWith('hunter-leads-') || f.startsWith('hunter-leads-instantly-')) && 
+      f.endsWith('.csv')
+    );
+    
+    for (const file of leadFiles) {
+      const filePath = path.join(clawdDir, file);
+      const stats = fs.statSync(filePath);
+      const fileDate = new Date(stats.mtime).toISOString().split('T')[0];
+      
+      if (fileDate === today) {
+        const content = fs.readFileSync(filePath, 'utf8');
+        const lines = content.trim().split('\n');
+        const rowCount = Math.max(0, lines.length - 1); // Exclude header
+        
+        deliverables.hunterLeads.push({
+          file,
+          rowCount,
+          date: fileDate
+        });
+      }
+    }
+
+    // === 4. Social Content ===
+    const socialDir = '/home/ubuntu/clawd/social-content';
+    if (fs.existsSync(socialDir)) {
+      const files = fs.readdirSync(socialDir);
+      for (const file of files) {
+        const filePath = path.join(socialDir, file);
+        const stats = fs.statSync(filePath);
+        const fileDate = new Date(stats.mtime).toISOString().split('T')[0];
+        
+        if (fileDate === today) {
+          let platform = 'Unknown';
+          if (file.toLowerCase().includes('linkedin')) platform = 'LinkedIn';
+          else if (file.toLowerCase().includes('twitter')) platform = 'Twitter';
+          else if (file.toLowerCase().includes('reddit')) platform = 'Reddit';
+          
+          deliverables.socialContent.push({
+            filename: file,
+            platform,
+            status: file.includes('posted') ? 'posted' : 'draft'
+          });
+        }
+      }
+    }
+
+    // === 5. Research ===
+    const researchDir = '/home/ubuntu/clawd/research';
+    if (fs.existsSync(researchDir)) {
+      const files = fs.readdirSync(researchDir);
+      for (const file of files) {
+        const filePath = path.join(researchDir, file);
+        const stats = fs.statSync(filePath);
+        const fileDate = new Date(stats.mtime).toISOString().split('T')[0];
+        
+        if (fileDate === today) {
+          const topic = file
+            .replace(/\.(md|txt|json)$/i, '')
+            .replace(/-/g, ' ')
+            .replace(/\b\w/g, l => l.toUpperCase());
+          
+          deliverables.research.push({
+            filename: file,
+            topic
+          });
+        }
+      }
+    }
+
+    // === 6. Outreach ===
+    const enrichmentReportPath = path.join(clawdDir, 'hunter-enrichment-report.json');
+    if (fs.existsSync(enrichmentReportPath)) {
+      const reportStats = fs.statSync(enrichmentReportPath);
+      const reportDate = new Date(reportStats.mtime).toISOString().split('T')[0];
+      
+      if (reportDate === today) {
+        const report = JSON.parse(fs.readFileSync(enrichmentReportPath, 'utf8'));
+        deliverables.outreach = {
+          leadsCount: report.totalLeads || 0,
+          campaign: report.campaignName || 'Unknown',
+          status: report.status || 'pending'
+        };
+      }
+    }
+
+    res.json(deliverables);
+  } catch (error) {
+    console.error('[DELIVERABLES] Error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`[STATUS] Dragon HQ Status Server running on port ${PORT}`);
   console.log(`[STATUS] Serving live agent data from OpenClaw sessions`);
+  console.log(`[STATUS] Override file: ${OVERRIDES_PATH}`);
 });
